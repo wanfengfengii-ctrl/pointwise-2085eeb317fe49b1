@@ -101,5 +101,59 @@ def main():
                              '更正版可取 t=s、q=s+2，原报告及原回执可按号领取')
 
 
+def run_guard_demo():
+    """Closed-station guard: issue V2 permits, park the bench, sign and re-fetch."""
+    from fractions import Fraction
+    from issuer.freeze import issue_guard
+    from review.publication import review_guard
+    from review.archive import get_guard_report
+
+    sample = json.loads((Path(__file__).resolve().parent / 'samples' / 'guard.json')
+                        .read_text(encoding='utf-8'))
+    units = sample['schedule']['drive_units']
+    drive = {int(beat): values for beat, values in sample['drive'].items()}
+    with TemporaryDirectory(prefix='guard-demo-') as directory:
+        bench_path = Path(directory) / 'bench.sqlite'
+        parked_path = Path(directory) / 'parked.sqlite'
+        center_path = Path(directory) / 'center.sqlite'
+        with closing(sqlite3.connect(bench_path)) as bench:
+            prepare_source(bench)
+            schedule = register_schedule(bench, **sample['schedule'])
+            revisions = []
+            for side in sample['sides']:
+                parent = revisions[-1].revision_id if revisions else None
+                revisions.append(register_revision(
+                    bench, sample['instrument'], schedule.schedule_id,
+                    **side['revision'], parent_id=parent))
+            pieces = tuple(
+                issue_guard(bench, revision.revision_id, side['origin'], side['directions'])
+                for revision, side in zip(revisions, sample['sides']))
+
+        with closing(sqlite3.connect(center_path)) as center:
+            prepare_center(center)
+            receipts = tuple(admit(center, piece) for piece in pieces)
+            bench_path.rename(parked_path)
+            pair = tuple(item.receipt_id for item in receipts)
+            report = review_guard(center, pair, drive, sample['retained_beats'],
+                                  Fraction(1, 2), drive_units=units)
+
+        with closing(sqlite3.connect(center_path)) as center:
+            prepare_center(center)
+            fetched = get_guard_report(center, report.report_id)
+            publish_scenario(
+                'guard-v2',
+                {'drive': drive, 'retained_beats': sample['retained_beats'],
+                 'minimum_margin': '1/2'},
+                {'margin': '1/2', 'claimable': True},
+                {'margin': str(fetched.margin), 'claimable': fetched.claimable},
+                fetched == report and fetched.rule is not None and
+                [str(value) for value in fetched.rule.weights] == ['-1/2', '1/2'] and
+                fetched.rule.threshold == Fraction(1, 4),
+                ['issuer/freeze.py', 'issuer/permission.py', 'review/guard_observable.py',
+                 'review/publication.py', 'review/archive.py'],
+                '关站后按许可签出可下发判别式，余量 1/2 达门槛，重开按原号领回')
+
+
 if __name__ == '__main__':
     main()
+    run_guard_demo()

@@ -1,9 +1,9 @@
 from intake.receipts import find_by_piece_id, store_receipt
-from issuer.envelope import read_envelope
+from issuer.envelope import read_any_envelope
 
 
 def admit(conn, text):
-    envelope = read_envelope(text)
+    envelope = read_any_envelope(text)
     conn.execute('BEGIN IMMEDIATE')
     with conn:
         existing = find_by_piece_id(conn, envelope.piece_id)

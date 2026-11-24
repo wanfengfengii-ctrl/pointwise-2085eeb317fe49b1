@@ -66,6 +66,34 @@ assert get_report(center, report.report_id) == report
 - `review(conn, receipt_ids, drive, retained_beats, *, drive_units)` 选定有序双件。兼容性按拍号、秒时标及有序通道和单位比较，方案号保留为业务引用。实际驱动按拍号、通道名提供，单位声明须与方案对应。保留拍允许乱序和重复，按时基归并。`Report` 保存实际请求、有序出处、`earliest_beat` 和 `success_receipt`。最早可辨拍为 `None` 表示无法区分，空留拍也可正式签存。
 - `get_report(conn, report_id)` 返回指定档案的原定稿和原回执，未知号返回 `None`。领取只读中心档案。
 
+## 关站余量签报（V2 站件）
+
+台架关库后的换表复测不公开内部状态模型，改用冻结的初态许可。白班发行站件时给定许可：初态为基点 `origin` 加至多两条同维方向 `directions`，每条方向乘一个独立取自闭区间 `[0,1]` 的系数，系数在整段各拍共用。零向量方向与线性相关方向都允许；零状态模型给空基点和空方向表。私有模型、原校准行和初态状态坐标始终留在台架。
+
+```python
+from issuer.freeze import issue_guard
+from review.publication import review_guard
+from review.archive import get_guard_report
+
+left_text = issue_guard(bench, left_revision_id, [0, 0], [[1, 0], [0, 1]])
+right_text = issue_guard(bench, right_revision_id, [], [])
+left = admit(center, left_text)
+right = admit(center, right_text)
+guard = review_guard(
+    center, (left.receipt_id, right.receipt_id),
+    {1: {'coil': 0}, 2: {'coil': 1}}, [1, 2], Fraction(1, 2),
+    drive_units=[('coil', 'V')],
+)
+assert guard.margin == Fraction(1, 2) and guard.claimable
+assert get_guard_report(center, guard.report_id) == guard
+```
+
+- `issue_guard(conn, revision_id, origin, directions)` 返回 V2 站件 JSON 文本（`version` 为整数 `2`），沿用 V1 的外层字段、SHA-256 摘要口径、方案与公开出处字段。V2 正文仍含 `schedule`、`provenance`、`waveform`。`waveform` 保留与 V1 同口径的 `beat_ids`、`channels`、`drive_rows`（列按拍序再按通道声明序，对任意完整驱动保全精确联合读值），并以 `permission` 取代 V1 的 `initial_rows`。`permission` 只含公开读值坐标下的 `origin_readings` 和至多两条 `direction_readings`，每行按拍序排列；其含义是各拍读值等于驱动固定项加基点读值，再加各方向读值乘各自的 `[0,1]` 共用系数，不含任何状态坐标标签。
+- `admit` 同时收纳 V1 与 V2 站件。重投仍按规范 JSON 判等复用首纳号；同交换件号配不同正文或版本拒收并保留首次实收。
+- `review_guard(conn, receipt_ids, drive, retained_beats, minimum_margin, *, drive_units)` 选择有序双 V2 实收号，时基、完整驱动、通道声明与留拍归并沿用 V1，归并后留拍必须非空。两版从各自许可独立选取初态，版内留拍共享本版初态，未留拍仍走完整驱动但不参与判别。`minimum_margin` 必须是正有理数，等号通过；V1 旧件混入余量签报抛 `ValueError`。
+- 留拍读值向量 `y` 的得分为 `sum(w[i] * y[i])`，约束 `sum(abs(w[i])) <= 1`。签报对每个权重计算右版全体合法波形最低分减左版全体合法波形最高分，再取该差的最大值，全程精确有理运算。返回的 `GuardReport` 含 `report_id`、`drive`、`retained_beats`、有序 `evidence`、`minimum_margin`、`margin`、按左右排序且向量内按留拍顺序的有理 `waveforms`、`rule`、`claimable` 和 `success_receipt`。`rule` 为 `None` 表示零余量（此时两条波形相同），否则含 `weights`、`left_max`、`right_min` 和两界中点 `threshold`。所选波形对分别可由对应实收件实现，且各拍绝对差的最大值恰等于签出余量。余量达到门槛才可领用；正余量低于门槛仍签证据但 `claimable` 为否。
+- `get_guard_report(conn, report_id)` 按原号领回原定稿和原回执，未知余量报告号返回 `None`。余量定稿与成功回执原子写入，独立于 V1 的 `reports` 表；无效申请和写入失败均无新增。V1 入口、编码、来件、定稿和原回归全部保留。
+
 有理数接受整数、`fractions.Fraction` 和 Python 3.11 `Fraction` 可解析的字符串。空值、布尔值、浮点数和零分母拒绝。完整驱动固定后，两件分别形成公开响应集合。中心逐个扩展实际留拍前缀，使用有理消元检查两件可否实现同一条可见序列。每件的自由参数在前缀内一致，两件可以独立取值，漏采读值不加约束。计算和拍序确定，发行和签存身份为独立业务编号。
 
 输入、维度、口径或正文错误抛出 `ValueError`，未知方案、修订或实收选择抛出 `KeyError`，存储错误沿用 `sqlite3.Error`。无效请求及提交失败均不增加正式报告或成功回执。变更通过业务入口追加，重复初始化和重开保留原有登记及已签成果。

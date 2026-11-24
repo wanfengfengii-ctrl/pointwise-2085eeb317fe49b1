@@ -3,7 +3,9 @@ import hmac
 import json
 from dataclasses import dataclass
 
-from issuer.waveform import WaveformEvidence, decode_waveform
+from issuer.waveform import (
+    GuardWaveformEvidence, WaveformEvidence, decode_guard_waveform, decode_waveform,
+)
 from protocol.schedule import Schedule, decode_schedule
 
 
@@ -15,6 +17,22 @@ class EnvelopeV1:
     schedule: Schedule
     waveform: WaveformEvidence
     canonical_text: str
+    version: int = 1
+
+
+@dataclass(frozen=True)
+class EnvelopeV2:
+    piece_id: str
+    checksum: str
+    body: dict
+    schedule: Schedule
+    waveform: GuardWaveformEvidence
+    canonical_text: str
+    version: int = 2
+
+    @property
+    def permission(self):
+        return self.waveform.permission
 
 
 def _canonical(payload):
@@ -31,11 +49,7 @@ def _validate_piece_id(piece_id):
         raise ValueError('piece ID must be nonblank text')
 
 
-def _read_body(body):
-    if not isinstance(body, dict) or set(body) != {'schedule', 'provenance', 'waveform'}:
-        raise ValueError('invalid piece body fields')
-    schedule = decode_schedule(body['schedule'])
-    source = body['provenance']
+def _read_provenance(schedule, source):
     text_fields = {'instrument_id', 'schedule_id', 'calibration_reference'}
     if not isinstance(source, dict) or set(source) != text_fields | {'revision_id'}:
         raise ValueError('invalid piece provenance fields')
@@ -45,7 +59,22 @@ def _read_body(body):
         raise ValueError('invalid piece revision ID')
     if source['schedule_id'] != schedule.schedule_id:
         raise ValueError('piece provenance names a different schedule')
+
+
+def _read_body_v1(body):
+    if not isinstance(body, dict) or set(body) != {'schedule', 'provenance', 'waveform'}:
+        raise ValueError('invalid piece body fields')
+    schedule = decode_schedule(body['schedule'])
+    _read_provenance(schedule, body['provenance'])
     return schedule, decode_waveform(schedule, body['waveform'])
+
+
+def _read_body_v2(body):
+    if not isinstance(body, dict) or set(body) != {'schedule', 'provenance', 'waveform'}:
+        raise ValueError('invalid piece body fields')
+    schedule = decode_schedule(body['schedule'])
+    _read_provenance(schedule, body['provenance'])
+    return schedule, decode_guard_waveform(schedule, body['waveform'])
 
 
 def _unique_object(entries):
@@ -57,21 +86,27 @@ def _unique_object(entries):
     return result
 
 
-def seal_piece(piece_id, body):
+def _seal(version, piece_id, body):
     _validate_piece_id(piece_id)
-    _read_body(body)
-    payload = {'version': 1, 'piece_id': piece_id, 'body': body}
+    payload = {'version': version, 'piece_id': piece_id, 'body': body}
     payload['checksum'] = _checksum(payload)
     return _canonical(payload)
 
 
-def read_envelope(text):
-    if not isinstance(text, str):
-        raise ValueError('a piece must be JSON text')
-    payload = json.loads(text, object_pairs_hook=_unique_object)
+def seal_piece(piece_id, body):
+    _read_body_v1(body)
+    return _seal(1, piece_id, body)
+
+
+def seal_guard_piece(piece_id, body):
+    _read_body_v2(body)
+    return _seal(2, piece_id, body)
+
+
+def _read_outer(payload):
     if not isinstance(payload, dict) or set(payload) != {'version', 'piece_id', 'body', 'checksum'}:
         raise ValueError('invalid piece envelope fields')
-    if type(payload['version']) is not int or payload['version'] != 1:
+    if type(payload['version']) is not int or payload['version'] not in (1, 2):
         raise ValueError('unsupported piece version')
     _validate_piece_id(payload['piece_id'])
     digest = payload['checksum']
@@ -80,6 +115,44 @@ def read_envelope(text):
     material = {field: payload[field] for field in ('version', 'piece_id', 'body')}
     if not hmac.compare_digest(_checksum(material), digest):
         raise ValueError('piece checksum mismatch')
-    schedule, waveform = _read_body(payload['body'])
+    return payload, digest
+
+
+def read_envelope(text):
+    if not isinstance(text, str):
+        raise ValueError('a piece must be JSON text')
+    payload = json.loads(text, object_pairs_hook=_unique_object)
+    payload, digest = _read_outer(payload)
+    if payload['version'] != 1:
+        raise ValueError('unsupported piece version')
+    schedule, waveform = _read_body_v1(payload['body'])
     return EnvelopeV1(payload['piece_id'], digest, payload['body'], schedule, waveform,
                       _canonical(payload))
+
+
+def read_guard_envelope(text):
+    if not isinstance(text, str):
+        raise ValueError('a piece must be JSON text')
+    payload = json.loads(text, object_pairs_hook=_unique_object)
+    payload, digest = _read_outer(payload)
+    if payload['version'] != 2:
+        raise ValueError('guard review requires a version 2 piece')
+    schedule, waveform = _read_body_v2(payload['body'])
+    return EnvelopeV2(payload['piece_id'], digest, payload['body'], schedule, waveform,
+                      _canonical(payload))
+
+
+def read_any_envelope(text):
+    """Validate either frozen version and return its typed envelope."""
+    if not isinstance(text, str):
+        raise ValueError('a piece must be JSON text')
+    payload = json.loads(text, object_pairs_hook=_unique_object)
+    payload, digest = _read_outer(payload)
+    canonical = _canonical(payload)
+    if payload['version'] == 1:
+        schedule, waveform = _read_body_v1(payload['body'])
+        return EnvelopeV1(payload['piece_id'], digest, payload['body'], schedule, waveform,
+                          canonical)
+    schedule, waveform = _read_body_v2(payload['body'])
+    return EnvelopeV2(payload['piece_id'], digest, payload['body'], schedule, waveform,
+                      canonical)

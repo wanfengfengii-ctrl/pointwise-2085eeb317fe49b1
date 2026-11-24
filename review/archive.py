@@ -1,4 +1,4 @@
-from review.report import decode_report
+from review.report import decode_guard_report, decode_report
 
 
 def get_report(conn, report_id):
@@ -10,3 +10,15 @@ def get_report(conn, report_id):
     if row is None:
         return None
     return decode_report(report_id, row[0], row[1])
+
+
+def get_guard_report(conn, report_id):
+    if not isinstance(report_id, str) or not report_id.strip():
+        raise ValueError('report ID must be nonblank text')
+    row = conn.execute('''SELECT guard_reports.body, guard_success_receipts.receipt_id
+                          FROM guard_reports
+                          JOIN guard_success_receipts USING (report_id)
+                          WHERE guard_reports.report_id = ?''', (report_id,)).fetchone()
+    if row is None:
+        return None
+    return decode_guard_report(report_id, row[0], row[1])
