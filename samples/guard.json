@@ -1,0 +1,23 @@
+{
+  "schedule": {"schedule_id": "guard-pulse", "beats": [[1, "0"], [2, "1"]], "drive_units": [["coil", "V"]]},
+  "instrument": "HC-M17",
+  "sides": [
+    {
+      "revision": {
+        "model": {"A": [[1, 0], [0, -1]], "B": [[0], [0]], "C": [[1, 1]], "D": [[0]]},
+        "calibration": {"reference": "HC/CAL/G1", "rows": [["bench-only-left"]]}
+      },
+      "origin": [0, 0], "directions": [[1, 0], [0, 1]]
+    },
+    {
+      "revision": {
+        "model": {"A": [], "B": [], "C": [[]], "D": [[1]]},
+        "calibration": {"reference": "HC/CAL/G2", "rows": [["bench-only-right"]]}
+      },
+      "origin": [], "directions": []
+    }
+  ],
+  "drive": {"1": {"coil": "0"}, "2": {"coil": "1"}},
+  "retained_beats": [1, 2],
+  "minimum_margins": ["1/2", "3/4"]
+}

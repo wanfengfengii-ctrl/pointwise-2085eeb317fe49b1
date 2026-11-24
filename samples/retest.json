@@ -1,0 +1,18 @@
+{
+  "schedule": {"schedule_id": "pulse", "beats": [[1, "0"], [2, "1"]], "drive_units": [["coil", "V"]]},
+  "instrument": "HC-M17",
+  "reference": {
+    "model": {"A": [[1]], "B": [[1]], "C": [[1]], "D": [[0]]},
+    "calibration": {"reference": "HC/CAL/101", "rows": [["private-reference", "0", "1"]]}
+  },
+  "replacement": {
+    "model": {"A": [[1]], "B": [[-1]], "C": [[1]], "D": [[0]]},
+    "calibration": {"reference": "HC/CAL/102", "rows": [["private-replacement", "0", "-1"]]}
+  },
+  "correction": {
+    "model": {"A": [[0, 1], [1, 0]], "B": [[-1], [0]], "C": [[1, 0]], "D": [[0]]},
+    "calibration": {"reference": "HC/CAL/103", "rows": [["private-correction", "0", "-1"]]}
+  },
+  "actual_drive": {"1": {"coil": "1"}, "2": {"coil": "0"}},
+  "retained_beats": [1, 2]
+}
